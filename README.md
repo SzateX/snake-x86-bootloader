@@ -1,4 +1,6 @@
 # Snake in bootloader for x86 (BIOS)
+Prepared for the purposes of an article celebrating Programmer's Day 2023 on the technical blog of Asseco Poland.
+
 
 ## Tools
 ### Software

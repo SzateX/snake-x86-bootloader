@@ -22,19 +22,20 @@ FOOD equ 1;
 SNAKE equ 2;
 
 init:
-    mov ax, 0xb800
-    mov ds, ax
-    mov bx, MemoryMap_size
-    cli
+    mov ax, 0xb800 ; wpisywanie wartości 0xb800 do rejestru AX
+    mov ds, ax ; kopiowanie wartości z AX do rejestru segmentowego DS
+    mov bx, MemoryMap_size ; wpisywanie do BX wielkości naszej mapy pamięci
+    cli ; wyłączenie przerwań sprzętowych
 
 zero_memory:
-	dec bx
-	mov byte [bx], 0
-	jnz zero_memory
+	dec bx ; zdekrementuj bx
+	mov byte [bx], 0 ; wstaw 0 do pamięci pod adresem DS:BX
+	jnz zero_memory ; jeżeli dekrementacja nie dała zera skocz na początek pętli
 
-    mov ah, 0
-	int 0x1A
-	mov [MemoryMap.Seed], dx
+    mov ah, 0 ; wybranie funkcji 0, przerawnia 0x1A, która pozwala na pobranie wartości zegara
+	int 0x1A ; wywołanie przerwania programowego
+	mov [MemoryMap.Seed], dx ; pobranie do miejsca przeznaczonego na seed młodszej części 32-bitowej wartości.
+
     mov word [MemoryMap.GameState], 0x4d01
     ;inc byte [MemoryMap.GameState]
     ;mov byte [MemoryMap.Direction], KEY_RIGHT
@@ -45,99 +46,78 @@ zero_memory:
     ;mov dword [MemoryMap.VideoBuffer + 2 *(12 * 80 + 39)], 0x66206620
     ;mov word [MemoryMap.GameMap + 12 * 80 + 39], 0x0202
     call generateFood
-    mov [cs:0x08*4], word timer_handler
+    mov [cs:0x08*4], word timer_handler ; wstawienie wskaźnika do funkcji obsługi przerwania PIT
 	mov [cs:0x08*4+2], cs
-    mov [cs:0x09*4], word keyboard_handler
+    mov [cs:0x09*4], word keyboard_handler ; wstawienie wskaźnika do funkcji obsługi przerwania klawiatury
 	mov [cs:0x09*4+2], cs
-    sti
+    sti ; włączenie przerwań sprzętowych
 	
 main:
-    hlt
-    cmp byte [MemoryMap.GameState], 2
-    je init
-    jmp main
+    hlt ; zaczekanie na nadejście przerwania sprzętowego
+    cmp byte [MemoryMap.GameState], 2 ; sprawdzenie czy czasem nie chcemy zresetować gry
+    je init ; jeżeli tak to inicjujemy od początku grę
+    jmp main ; jeżeli nie to znów czekamy
+
 
 keyboard_handler:
-    pusha
-    in al, 0x60
-    cmp al, ESCAPE
+    pusha ; zabezpiczenie wartości rejestrów ogólnego przeznaczenia
+    in al, 0x60 ; odczyt scan code
+    cmp al, ESCAPE ; sprawdzenie czy przypadekiem nie chcemy zresetować gry
     jne snake_direction
     mov byte [MemoryMap.GameState], 2
     jmp endOfInterrupt
     
 snake_direction:    
-    mov bx, cs
+    mov bx, cs ; w rejestrze segmentowym ES chcemy mieć wartość segmentu CS
+			   ; który wskazuje na ten kod, dzięki temu będzie można dostać się do tablicy z scan code
     mov es, bx
     mov di, keyboard_directions
     mov cx, 4
-    repne scasb
-    jne endOfInterrupt
-    mov bl, al
+    repne scasb ; przeskanowanie tablicy
+    jne endOfInterrupt ; skok do końca przerwania
+    mov bl, al ; weryfikacja próby pójścia snake w przeciwną stronę
     xor bl, [MemoryMap.Direction]
     and bl, 1
     jz endOfInterrupt
 	
 assign:
-    mov [MemoryMap.Direction],  al
+    mov [MemoryMap.Direction],  al ; przypisanie wartości
 
 endOfInterrupt:
-    mov al, 0x20
+    mov al, 0x20 ; wysłanie sygnału do kontrolera przerwań, że może zacząć przyjmować kolejne
     out 0x20, al    
-    popa
-    iret
-	
-; up:
-;     cmp al, KEY_UP
-;     jne down
-;     cmp byte [MemoryMap.Direction], KEY_DOWN
-;     je endOfInterrupt
-;     jmp assign
-; down:
-;     cmp al, KEY_DOWN
-;     jne left
-;     cmp byte [MemoryMap.Direction], KEY_UP
-;     je endOfInterrupt
-;     jmp assign
-; left:
-;     cmp al, KEY_LEFT
-;     jne right
-;     cmp byte [MemoryMap.Direction], KEY_RIGHT
-;     je endOfInterrupt
-;     jmp assign
-; right:
-;     cmp al, KEY_RIGHT
-;     jne endOfInterrupt
-;     cmp byte [MemoryMap.Direction], KEY_LEFT
-;     je endOfInterrupt
-
+    popa ; przywórcenie stanu rejestrów
+    iret ; wyjście z funkcji obsługi przerwań
 
 timer_handler:
-    int 0x70
+    int 0x70 ; zachowanie kompatybilności z oryginalnym przerwaniem
     inc word [cs:0x46c]
 	
-    cmp byte [MemoryMap.GameState], 1
-    jne eoi
+    cmp byte [MemoryMap.GameState], 1 ; sprawdzenie stanu gry
+    jne eoi ; jeżeli nie jesteśmy w trybie grania odpuszczamy wykonywanie reszty kodu i wychodzimy z przerwania
 
-    mov bx, [MemoryMap.SnakeData]
-    mov al, [MemoryMap.Direction]
-    cmp byte al, KEY_UP
+    mov bx, [MemoryMap.SnakeData] ; ładowanie współrzędnych głowy
+    mov al, [MemoryMap.Direction] ; ładowanie kierunku
+    cmp byte al, KEY_UP ; idziemy w górę
     jne $+4
     dec bh
-    cmp byte al, KEY_DOWN
+    cmp byte al, KEY_DOWN ; idziemy w dół
     jne $+4
     inc bh
-    cmp byte al, KEY_LEFT
+    cmp byte al, KEY_LEFT ; idziemy w lewo
     jne $+4
     dec bl
-    cmp byte al, KEY_RIGHT
+    cmp byte al, KEY_RIGHT ; idziemy w prawo
     jne $+4
     inc bl
 
+    ; sprawdzenie granic planszy
     cmp bl, 80
     jae lose
     cmp bh, 25
     jae lose
 
+    ; Sprawdzenie planszy
     mov al, 80
     mov cx, bx
     mul ch
@@ -145,24 +125,25 @@ timer_handler:
     add ax, cx
     mov si, ax
     
-    cmp byte [si + MemoryMap.GameMap], SNAKE
+    cmp byte [si + MemoryMap.GameMap], SNAKE ; jeżeli natrafiliśmy na fragment węża, to przegrywamy
     je lose
     
-    cmp byte [si + MemoryMap.GameMap], FOOD
+    cmp byte [si + MemoryMap.GameMap], FOOD ; jeżeli natrafiliśmy na jedzenie to nie potrzebujemy "skracać węża"
     je eatfood
 
+	; wylicznie odpowiedniego bajtu zawietającego ogon węża.
     mov di, [MemoryMap.VectorSize]
-    shl di, 1
+    shl di, 1 ; krótszy sposób na pomnośzenie liczby razy 2 - przesuń bitowo liczbę w lewą stronę.
     mov cx, [MemoryMap.SnakeData + di - 2]
-    mov al, 80
+    mov al, 80 ; Offset = 80 * współrzędna y + współrzędna x
     mul ch
     xor ch, ch
     add ax, cx
-    mov di, ax
+    mov di, ax ; w DI znajduje się teraz odpowiedni offset w mapie gry.
 
     mov byte [di + MemoryMap.GameMap], EMPTY
-    dec word [MemoryMap.VectorSize]
-	    
+    dec word [MemoryMap.VectorSize] ; usunięcie ostatniej wartości z wektora to w naszym przypadku zapomnienie o tej wartości.
+	                                ; dzięki temu zabiegowi będzie można dodać bezpiecznie do początku wektora nową wartość głowy.
     jmp grow_snake
 
 eatfood:
@@ -173,7 +154,7 @@ grow_snake:
     mov cx, [MemoryMap.VectorSize]
     mov di, cx
     shl di, 1
-
+; przesuwanie wartości w wektorze o pozycję dalej
 copy_loop:    
     cmp cx, 0
     je insert
@@ -182,144 +163,79 @@ copy_loop:
     sub di, 2
     loop copy_loop
 
-
+; wstawianie nowej głowy
 insert:    
     mov [MemoryMap.SnakeData], bx
     inc word [MemoryMap.VectorSize]
     mov byte [MemoryMap.GameMap + si], SNAKE
 
+; przygotowanie odpowiednich wartości
+    mov cx, 80*25 ; licznik mówiący o liczbie komórek
+    mov si, MemoryMap.GameState - 1 ; wskaźnik na ostatni element z mapy gry
+    mov di, MemoryMap.GameMap - 2 ; wskaźnik na ostatni element bufora karty graficznej
 
-    mov cx, 80*25
-    mov si, MemoryMap.GameState - 1
-    mov di, MemoryMap.GameMap - 2
-
-    xor bx, bx
-    mov dx, 0x0020
+    xor bx, bx ; wyzerowanie rejestru bx
+    mov dx, 0x0020 ; przygotowanie znaku spacji
 draw:
-    mov bl, [si]
-    mov dh, [cs:bx+sprites]
-    mov word [di], dx
-    dec si
+    mov bl, [si] ; pobranie z aktualnego miejsca mapy gry stanu komórki
+    mov dh, [cs:bx+sprites] ; znalezienie odpowiedniego koloru duszka
+    mov word [di], dx ; rysujemy na buforze odpowiedni znak
+    dec si ; przesuwamy wskaźniki o indeks niżej
     sub di, 2
 
     loop draw
 	
 eoi:  
     iret
-; draw:
-;     mov al, [si]
-; draw_empty:
-;     cmp al, EMPTY
-;     jne draw_food
-;     mov word [di], 0x0020
-;     jmp end_loop
-; draw_food:
-;     cmp al, FOOD 
-;     jne draw_snake
-;     mov word [di], 0x2220
-;     jmp end_loop
-; draw_snake:
-;     mov word [di], 0x6620
-; end_loop:
-;     dec si
-;     sub di, 2
-;     loop draw
 
 lose:
-    mov byte [MemoryMap.GameState], 0
-    xor ax, ax
-    mov es, ax
+    mov byte [MemoryMap.GameState], 0 ; ustawienie odpowiedniego stanu
+    xor ax, ax ; przygotowanie wartości potrzebnych dla funkcji BIOS
+    mov es, ax ; wskazanie na napis
     mov bp, lost_string
-    mov ax, 0x1300
-    mov bx, 0xc
-    mov cx, 8
-    mov dx, 0
-    int 10h
-    iret
-
-; print_reg_16:
-;     push ax
-;     push bx
-;     push dx
-;     xor bx, bx
-;     mov dx, ax
-    
-; switch:
-;     mov ax, dx
-;     cmp bx, 0
-;     jne switch1
-;     shr ah, 4
-;     jmp a
-; switch1:
-;     cmp bx, 2
-;     jne switch2
-;     and ah, 15
-;     jmp a
-
-; switch2:
-;     cmp bx, 4
-;     jne switch3
-;     shr al, 4
-;     mov ah, al
-;     jmp a
-
-; switch3:
-;     and al, 15
-;     mov ah, al
-
-; a:
-;     cmp ah, 10
-;     jl add_48
-;     add ah, 55
-;     jmp p
-; add_48:
-;     add ah, 48
-; p: 
-;     mov [MemoryMap.VideoBuffer + bx], ah
-;     mov byte [MemoryMap.VideoBuffer + bx + 1], 0x0c
-;     add bx, 2
-;     cmp bx, 8
-;     jne switch
-;     pop dx
-;     pop bx
-;     pop ax
-;     ret
+    mov ax, 0x1300 ; wskazanie, że wykonujemy funkcję 0x12h (wypisz napis) oraz tryb zapisu
+    mov bx, 0xc ; zapis na pierwszej stronie (BH) oraz użyczie czerwonego koloru z czarnym tle (BL)
+    mov cx, 8 ; długośc napisu
+    mov dx, 0 ; wypisz w pierwszej kolumnie i pierwszym wierszu
+    int 10h ; wywołaj przerwanie programowe
+    iret ; wyjdź z przerwania zegara
 
 random:
-    push dx
+    push dx ; wrzucenie wartości rejestrów na stos (zabezpieczenie ich wartości)
     push cx
-    mov ax, [MemoryMap.Seed]
-	mov dx, 7993
+    mov ax, [MemoryMap.Seed] ; pobranie seeda do rejestru AX
+	mov dx, 7993 ; wpisanie do rejestrów DX i CX wybranych arbitralnie liczb pierwszych
 	mov cx, 9781
-	mul dx
-	add ax, cx
-	mov [MemoryMap.Seed], ax
-    pop cx
+	mul dx ; mnożenie AX przez DX - wynik wylądował w rejestrach DX (starsze 2 bajty) i AX (młodsze 2 bajty)
+	add ax, cx ; nie potrzebna jest nam wartość DX, dlatego dodałem do rejestru AX rejestr CX 
+	mov [MemoryMap.Seed], ax ; zapisanie nowego seeda
+    pop cx ; przywrócenie wartości rejestrów z stosu
     pop dx
-    ret
+    ret ; wyjście z funkcji
 
 generateFood:
-    pusha
+    pusha ; zabezpiczenie wszystkich rejestrów ogólnego przeznaczenia
 generation_loop: 
-    call random
-    xor dx, dx
-    mov cx, 80
-    div cx
-    mov bl, dl
-    call random
-    xor dx, dx
+    call random ; zawołanie funkcji losującej
+    xor dx, dx ; wyzerowanie rejestru DX
+    mov cx, 80 ; wykonanie operacji: rejestr BL = wylosowana wartość % szerokość ekranu 
+    div cx ; w tym przypadku div weźmie połączenie rejestrów DX z AX i podzieli przez rejestr CX
+    mov bl, dl ; reszta z dzielenia znajduje się w rejestrze DX ale my wiemy, że 80 mieści się w jednym bajcie, to możemy pobrać tylko młodszą część.
+			   ; stanowi to pozycję x na ekranie.
+    call random ; zawołanie ponownie funkcji losującej 
+    xor dx, dx ; wykonanie operacji: rejestr DL = wylosowana wartosc % wysokosc
     mov cx, 25
-    div cx
-    mov al, 80
-    mul dl
-    xor bh, bh
-    add ax, bx
-    mov di, ax
-    cmp byte [di + MemoryMap.GameMap], SNAKE
-    je generation_loop
-    mov byte [di + MemoryMap.GameMap], FOOD
-    popa
-    ret
+    div cx ; wynik wylądował w rejestrze DL - jest to pozycja y
+    mov al, 80 ; teraz potrzebujemy policzyć, który bajt odpowiada w nasze mapie gry odpowiada za wylosowane współrzędne
+    mul dl ; rejestr AX = al * dl - czyli 80 * pozycja y
+    xor bh, bh ; wyzeruj rejestr BH jeżeli znalazłyby się tam jakieś śmieci.
+    add ax, bx ; dodaj wartość pozycji x do rejestru ax
+    mov di, ax; przekopiuj wynik do rejestru di - jest to offset w naszej mapie gry
+    cmp byte [di + MemoryMap.GameMap], SNAKE; sprawdź czy wąż znajduje się na tej pozycji
+    je generation_loop ; jeżeli tak to powtórz generowanie
+    mov byte [di + MemoryMap.GameMap], FOOD ; jeżeli nie to wstaw tam jedzenie
+    popa ; przywróć rejestry
+    ret ; wyjdź z funkcji
 
 lost_string:
 db 'You lose'
